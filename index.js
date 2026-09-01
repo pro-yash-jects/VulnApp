@@ -1,6 +1,6 @@
 const express = require('express');
 const app = express();
-const PORT = process.env.PORT || 8002;
+const PORT = process.env.PORT || 3000;
 
 // 🚨 VULNERABILITY 1: Hardcoded Secrets (Will be caught by Gitleaks)
 
