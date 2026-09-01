@@ -3,9 +3,11 @@ const app = express();
 const PORT = process.env.PORT || 8002;
 
 // 🚨 VULNERABILITY 1: Hardcoded Secrets (Will be caught by Gitleaks)
-// These are fake AWS keys, but they match the regex pattern Gitleaks looks for.
-const AWS_ACCESS_KEY_ID = "AKIAIOSFODNN7EXAMPLE";
-const AWS_SECRET_ACCESS_KEY = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
+
+const GITHUB_TOKEN = "ghp_zR4xT9yP2wQ5vM7nL3kK8jH1fG6dD4sA9bC2";
+const AWS_ACCESS_KEY_ID = "AKIAU6GDY4G8L9V2R3XQ";
+const AWS_SECRET_ACCESS_KEY = "qXz8+L9mR2vK4pW7yN1bB5cV8nZ3xM6gH9fJ2sD0";
+const SLACK_BOT_TOKEN = "xoxb-123456789012-1234567890123-aB3dE5fG7hI9jK1lM3nO5pQ7";
 
 app.use(express.urlencoded({ extended: true }));
 
