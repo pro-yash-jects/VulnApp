@@ -16,14 +16,15 @@ pipeline {
             }
         }
 
-        stage('2. Secret Scan (Gitleaks)') {
+stage('2. Secret Scan (Gitleaks)') {
             steps {
                 echo "--> Scanning workspace for hardcoded secrets..."
-                // Removes '|| true' to strictly fail the pipeline if secrets are found
                 sh '''
-                    docker run --rm -v "${WORKSPACE}":/path \
+                    docker run --rm \
+                    --volumes-from jenkins-devsecops \
+                    -w "${WORKSPACE}" \
                     zricethezav/gitleaks:latest detect \
-                    --source="/path" --verbose --no-git
+                    --source="." --verbose --no-git
                 '''
             }
         }
@@ -31,11 +32,12 @@ pipeline {
         stage('3. SAST Scan (Semgrep)') {
             steps {
                 echo "--> Running Semgrep static code analysis..."
-                // Strict failure on command injection or XSS patterns in source code
                 sh '''
-                    docker run --rm -v "${WORKSPACE}":/src \
+                    docker run --rm \
+                    --volumes-from jenkins-devsecops \
+                    -w "${WORKSPACE}" \
                     returntocorp/semgrep semgrep \
-                    --config=auto /src --error --timeout 120
+                    --config=auto . --error --timeout 120
                 '''
             }
         }
@@ -43,13 +45,14 @@ pipeline {
         stage('4. SCA Scan (Trivy Filesystem)') {
             steps {
                 echo "--> Scanning dependencies for known CVEs..."
-                // Exits with code 1 (fails build) if HIGH or CRITICAL CVEs are in package.json
                 sh '''
-                    docker run --rm -v "${WORKSPACE}":/root/workspace \
+                    docker run --rm \
+                    --volumes-from jenkins-devsecops \
+                    -w "${WORKSPACE}" \
                     aquasec/trivy:latest fs \
                     --severity HIGH,CRITICAL \
                     --exit-code 1 \
-                    /root/workspace
+                    .
                 '''
             }
         }
