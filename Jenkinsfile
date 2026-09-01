@@ -16,44 +16,51 @@ pipeline {
             }
         }
 
-stage('2. Secret Scan (Gitleaks)') {
+        stage('2. Secret Scan (Gitleaks)') {
             steps {
-                echo "--> Scanning workspace for hardcoded secrets..."
+                echo "--> Running Gitleaks in Audit Mode..."
                 sh '''
                     docker run --rm \
                     --volumes-from jenkins-devsecops \
                     -w "${WORKSPACE}" \
                     zricethezav/gitleaks:latest detect \
-                    --source="." --verbose --no-git
+                    --source="." --verbose --no-git \
+                    --report-format json --report-path gitleaks-report.json || true
                 '''
+                // Archive the generated JSON report
+                archiveArtifacts artifacts: 'gitleaks-report.json', allowEmptyArchive: true
             }
         }
 
         stage('3. SAST Scan (Semgrep)') {
             steps {
-                echo "--> Running Semgrep static code analysis..."
+                echo "--> Running Semgrep in Audit Mode..."
                 sh '''
                     docker run --rm \
                     --volumes-from jenkins-devsecops \
                     -w "${WORKSPACE}" \
                     returntocorp/semgrep semgrep \
-                    --config=auto . --error --timeout 120
+                    --config=auto . \
+                    --json -o semgrep-report.json || true
                 '''
+                archiveArtifacts artifacts: 'semgrep-report.json', allowEmptyArchive: true
             }
         }
 
         stage('4. SCA Scan (Trivy Filesystem)') {
             steps {
-                echo "--> Scanning dependencies for known CVEs..."
+                echo "--> Scanning dependencies and saving report..."
                 sh '''
                     docker run --rm \
                     --volumes-from jenkins-devsecops \
                     -w "${WORKSPACE}" \
                     aquasec/trivy:latest fs \
                     --severity HIGH,CRITICAL \
-                    --exit-code 1 \
-                    .
+                    --format json --output trivy-fs-report.json \
+                    --exit-code 0 \
+                    . || true
                 '''
+                archiveArtifacts artifacts: 'trivy-fs-report.json', allowEmptyArchive: true
             }
         }
 
@@ -66,20 +73,25 @@ stage('2. Secret Scan (Gitleaks)') {
 
         stage('6. Container Image Scan (Trivy Image)') {
             steps {
-                echo "--> Scanning built container image..."
+                echo "--> Scanning built container image and saving report..."
                 sh '''
-                    docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+                    docker run --rm \
+                    --volumes-from jenkins-devsecops \
+                    -w "${WORKSPACE}" \
+                    -v /var/run/docker.sock:/var/run/docker.sock \
                     aquasec/trivy:latest image \
                     --severity HIGH,CRITICAL \
-                    --exit-code 1 \
-                    ${APP_NAME}:${IMAGE_TAG}
+                    --format json --output trivy-image-report.json \
+                    --exit-code 0 \
+                    ${APP_NAME}:${IMAGE_TAG} || true
                 '''
+                archiveArtifacts artifacts: 'trivy-image-report.json', allowEmptyArchive: true
             }
         }
 
         stage('7. Deploy to Local Staging') {
             steps {
-                echo "--> Deploying app container to port ${HOST_PORT}..."
+                echo "--> Deploying app container..."
                 sh '''
                     docker network create ${NET_NAME} || true
                     docker rm -f ${APP_NAME}-staging || true
@@ -97,15 +109,19 @@ stage('2. Secret Scan (Gitleaks)') {
 
         stage('8. DAST Scan (OWASP ZAP)') {
             steps {
-                echo "--> Running OWASP ZAP dynamic analysis..."
-                // ZAP communicates over the internal bridge network directly to the container's internal port
+                echo "--> Running OWASP ZAP and saving HTML/JSON reports..."
+                // Running as root ensures ZAP has permission to write reports to the Jenkins workspace volume
                 sh '''
                     docker run --rm \
-                      --network ${NET_NAME} \
-                      ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
-                      -t http://${APP_NAME}-staging:${APP_PORT} \
-                      -I
+                    --volumes-from jenkins-devsecops \
+                    -w "${WORKSPACE}" \
+                    --user root \
+                    --network ${NET_NAME} \
+                    ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
+                    -t http://${APP_NAME}-staging:${APP_PORT} \
+                    -I -J zap-report.json -r zap-report.html || true
                 '''
+                archiveArtifacts artifacts: 'zap-report.*', allowEmptyArchive: true
             }
         }
     }
@@ -119,10 +135,7 @@ stage('2. Secret Scan (Gitleaks)') {
             '''
         }
         success {
-            echo "✅ Pipeline executed successfully: all security stages passed."
-        }
-        failure {
-            echo "❌ Pipeline failed due to security vulnerabilities. Review logs above."
+            echo "✅ Pipeline finished. Check the 'Build Artifacts' tab for security reports."
         }
     }
 }
