@@ -1,12 +1,59 @@
 {
-  "name": "devsecops-vulnerable-node",
+  "name": "cloud-native-devsecops-app",
   "version": "1.0.0",
-  "main": "index.js",
+  "description": "Production-grade cloud-native web application with automated DevSecOps CI/CD pipeline, security guardrails, and Prometheus/Grafana observability stack",
+  "main": "src/server.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "lint": "eslint src/ tests/",
+    "lint:fix": "eslint src/ tests/ --fix",
+    "test": "jest --detectOpenHandles --forceExit",
+    "test:coverage": "jest --coverage --detectOpenHandles --forceExit",
+    "test:watch": "jest --watch"
   },
+  "keywords": [
+    "devsecops",
+    "ci-cd",
+    "github-actions",
+    "sonarqube",
+    "trivy",
+    "prometheus",
+    "grafana",
+    "docker",
+    "aws-ec2",
+    "sre"
+  ],
+  "author": "DevSecOps Engineering Team",
+  "license": "MIT",
   "dependencies": {
-    "express": "4.17.1",
-    "lodash": "4.17.15"
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.0.0",
+    "prom-client": "^15.1.3"
+  },
+  "devDependencies": {
+    "eslint": "^8.57.1",
+    "jest": "^29.7.0",
+    "supertest": "^7.0.0"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "coverageDirectory": "coverage",
+    "collectCoverageFrom": [
+      "src/**/*.js",
+      "!src/server.js"
+    ],
+    "coverageReporters": [
+      "text",
+      "lcov",
+      "clover",
+      "json"
+    ],
+    "testMatch": [
+      "**/tests/**/*.test.js"
+    ]
   }
 }

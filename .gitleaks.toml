@@ -1,0 +1,11 @@
+# Gitleaks Configuration for DevSecOps Guardrails
+title = "Gitleaks DevSecOps Secret Detection Rules"
+
+[allowlist]
+description = "Global allowlist for example and mock files"
+paths = [
+  '''\.env\.example''',
+  '''package-lock\.json''',
+  '''coverage/.*''',
+  '''tests/.*'''
+]

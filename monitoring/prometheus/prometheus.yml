@@ -1,0 +1,41 @@
+global:
+  scrape_interval: 10s
+  evaluation_interval: 10s
+  scrape_timeout: 5s
+
+rule_files:
+  - "alert_rules.yml"
+
+scrape_configs:
+  # 1. DevSecOps Application Metrics (Custom Prom-Client telemetry)
+  - job_name: "devsecops-app"
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["app:3000"]
+        labels:
+          environment: "production"
+          service: "web-api"
+
+  # 2. cAdvisor Container Resource Utilization (CPU, Memory, I/O)
+  - job_name: "cadvisor"
+    static_configs:
+      - targets: ["cadvisor:8080"]
+        labels:
+          environment: "production"
+          service: "container-telemetry"
+
+  # 3. Node Exporter Host System Metrics (Host CPU, RAM, Disk)
+  - job_name: "node-exporter"
+    static_configs:
+      - targets: ["node-exporter:9100"]
+        labels:
+          environment: "production"
+          service: "host-telemetry"
+
+  # 4. Prometheus Self-Monitoring
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+        labels:
+          environment: "production"
+          service: "prometheus"

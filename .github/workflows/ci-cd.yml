@@ -1,0 +1,252 @@
+name: Cloud-Native DevSecOps Deployment Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  APP_PORT: 3000
+
+jobs:
+  # =========================================================================
+  # 1. Continuous Integration: Linting, Unit & Integration Testing, Coverage
+  # =========================================================================
+  lint-and-unit-tests:
+    name: 🧪 Lint & Automated Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Run ESLint Guardrail
+        run: npm run lint
+
+      - name: Run Jest Test Suite & Generate Coverage
+        run: npm run test:coverage
+
+      - name: Upload Test Coverage Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: code-coverage-report
+          path: coverage/
+          retention-days: 7
+
+  # =========================================================================
+  # 2. Static Code Analysis (SAST) & Secret Scanning (SonarQube & Gitleaks)
+  # =========================================================================
+  security-sast-sonarqube:
+    name: 🛡️ SAST Scan (SonarQube & Gitleaks)
+    needs: [lint-and-unit-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code (Full History for Blame/Telemetry)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download Test Coverage Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: code-coverage-report
+          path: coverage/
+
+      - name: Gitleaks Automated Secret Scanning Guardrail
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: false
+
+      - name: SonarQube Static Code Analysis (SAST)
+        uses: sonarsource/sonarqube-scan-action@v4
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        continue-on-error: true # Allows demo pipeline to proceed when standalone Sonar server credentials aren't wired
+
+      - name: SonarQube Quality Gate Check
+        uses: sonarsource/sonarqube-quality-gate-action@v1
+        timeout-minutes: 5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        continue-on-error: true
+
+  # =========================================================================
+  # 3. Software Composition Analysis (SCA): Trivy Dependency Scanning
+  # =========================================================================
+  security-trivy-sca:
+    name: 📦 SCA Dependency Scan (Trivy Filesystem)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy Vulnerability Scanner (Repo & Dependencies)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-sca-results.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload Trivy SCA SARIF Report to GitHub Security Tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-sca-results.sarif'
+          category: 'trivy-filesystem'
+
+  # =========================================================================
+  # 4. Container Build & Image Vulnerability Scanning (Trivy Container Gate)
+  # =========================================================================
+  build-and-scan-image:
+    name: 🐳 Docker Build & Trivy Image Scan
+    needs: [lint-and-unit-tests, security-sast-sonarqube, security-trivy-sca]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Application Docker Image Locally
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          load: true
+          tags: |
+            cloud-native-devsecops-app:${{ github.sha }}
+            cloud-native-devsecops-app:latest
+
+      - name: Run Trivy Container Vulnerability Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'cloud-native-devsecops-app:${{ github.sha }}'
+          format: 'table'
+          exit-code: '0' # Set to '1' for hard fail if critical CVE threshold exceeded
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Generate Trivy Image SARIF Report
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'cloud-native-devsecops-app:${{ github.sha }}'
+          format: 'sarif'
+          output: 'trivy-image-results.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload Trivy Container SARIF Report
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-image-results.sarif'
+          category: 'trivy-container-image'
+
+      - name: Log in to GitHub Container Registry (GHCR)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push Container Image to Registry
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+  # =========================================================================
+  # 5. Automated Deployment onto AWS EC2 & SRE Health Verification
+  # =========================================================================
+  deploy-to-ec2:
+    name: 🚀 Automated Deploy onto AWS EC2
+    needs: [build-and-scan-image]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Configure SSH Key & Deploy to AWS EC2
+        env:
+          EC2_HOST: ${{ secrets.AWS_EC2_HOST }}
+          EC2_USER: ${{ secrets.AWS_EC2_USER || 'ec2-user' }}
+          SSH_KEY: ${{ secrets.AWS_EC2_SSH_KEY }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          if [ -z "$EC2_HOST" ] || [ -z "$SSH_KEY" ]; then
+            echo "⚠️ AWS_EC2_HOST or AWS_EC2_SSH_KEY secret not populated."
+            echo "Skipping direct SSH deployment step (Simulation mode)."
+            echo "To enable automated deployment, add AWS_EC2_HOST and AWS_EC2_SSH_KEY to repository secrets."
+            exit 0
+          fi
+
+          echo "Configuring SSH key authentication..."
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/ec2_id_rsa
+          chmod 600 ~/.ssh/ec2_id_rsa
+
+          echo "Synchronizing deployment files to AWS EC2 instance ($EC2_HOST)..."
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/ec2_id_rsa ${EC2_USER}@${EC2_HOST} "mkdir -p /opt/devsecops/monitoring"
+          scp -o StrictHostKeyChecking=no -i ~/.ssh/ec2_id_rsa docker-compose.yml ${EC2_USER}@${EC2_HOST}:/opt/devsecops/
+          scp -o StrictHostKeyChecking=no -i ~/.ssh/ec2_id_rsa -r monitoring/ ${EC2_USER}@${EC2_HOST}:/opt/devsecops/
+
+          echo "Executing rolling container update on AWS EC2..."
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/ec2_id_rsa ${EC2_USER}@${EC2_HOST} << EOF
+            cd /opt/devsecops
+            docker compose pull app || true
+            docker compose up -d --remove-orphans
+          EOF
+
+      - name: SRE Automated Post-Deployment Verification (Golden Signals)
+        env:
+          EC2_HOST: ${{ secrets.AWS_EC2_HOST }}
+        run: |
+          if [ -z "$EC2_HOST" ]; then
+            echo "Deployment verification simulation passed (No remote host configured)."
+            exit 0
+          fi
+
+          echo "Validating application health and liveness probe at http://${EC2_HOST}:3000/health..."
+          for i in {1..10}; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://${EC2_HOST}:3000/health || echo "000")
+            if [ "$STATUS" -eq 200 ]; then
+              echo "✅ Health check PASSED with HTTP 200 OK after attempt $i."
+              exit 0
+            fi
+            echo "Attempt $i: Received HTTP $STATUS. Retrying in 5 seconds..."
+            sleep 5
+          done
+
+          echo "❌ Deployment health verification FAILED after 10 attempts."
+          exit 1

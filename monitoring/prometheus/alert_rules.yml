@@ -1,0 +1,64 @@
+groups:
+  - name: devsecops_application_alerts
+    rules:
+      # SRE Availability Alert
+      - alert: AppDown
+        expr: up{job="devsecops-app"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          tier: application
+        annotations:
+          summary: "DevSecOps Web Application is down"
+          description: "Target application container has been unreachable for more than 1 minute."
+
+      # SRE Golden Signal: Errors
+      - alert: HighHttpErrorRate
+        expr: >
+          (
+            sum(rate(http_requests_total{status_code=~"5.."}[5m]))
+            /
+            sum(rate(http_requests_total[5m]))
+          ) * 100 > 5
+        for: 2m
+        labels:
+          severity: warning
+          tier: application
+        annotations:
+          summary: "High HTTP 5xx Error Rate (> 5%)"
+          description: "HTTP 5xx error rate is currently at {{ $value | printf \"%.2f\" }}% over the last 5 minutes."
+
+      # SRE Golden Signal: Latency
+      - alert: HighP99Latency
+        expr: histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le)) > 0.5
+        for: 2m
+        labels:
+          severity: warning
+          tier: performance
+        annotations:
+          summary: "High P99 Latency (> 500ms)"
+          description: "P99 latency has exceeded 500ms for more than 2 minutes (current: {{ $value | printf \"%.3f\" }}s)."
+
+  - name: container_resource_alerts
+    rules:
+      # SRE Golden Signal: Saturation (Container CPU)
+      - alert: ContainerHighCpuUsage
+        expr: (sum(rate(container_cpu_usage_seconds_total{name="devsecops-app"}[2m])) by (name) * 100) > 85
+        for: 3m
+        labels:
+          severity: warning
+          tier: infrastructure
+        annotations:
+          summary: "Application Container High CPU Usage (> 85%)"
+          description: "Container {{ $labels.name }} CPU utilization is at {{ $value | printf \"%.2f\" }}%."
+
+      # SRE Golden Signal: Saturation (Container Memory)
+      - alert: ContainerHighMemoryUsage
+        expr: (container_memory_usage_bytes{name="devsecops-app"} / container_spec_memory_limit_bytes{name="devsecops-app"} * 100) > 85
+        for: 3m
+        labels:
+          severity: warning
+          tier: infrastructure
+        annotations:
+          summary: "Application Container High Memory Usage (> 85%)"
+          description: "Container {{ $labels.name }} memory usage is above 85% of its limit."
