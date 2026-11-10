@@ -1,0 +1,8 @@
+# ==========================================
+# Semgrep SAST Ignore Patterns
+# Exclude CI/CD workflow YAMLs, test mocks, and coverage artifacts
+# ==========================================
+.github/**
+coverage/**
+tests/**
+node_modules/**

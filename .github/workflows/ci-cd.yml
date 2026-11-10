@@ -14,7 +14,6 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
   APP_PORT: 3000
 
 jobs:
@@ -76,19 +75,27 @@ jobs:
         continue-on-error: false
 
       - name: SonarQube Static Code Analysis (SAST)
-        uses: sonarsource/sonarqube-scan-action@v4
+        if: ${{ secrets.SONAR_TOKEN != '' }}
+        uses: sonarsource/sonarqube-scan-action@v6
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-        continue-on-error: true # Allows demo pipeline to proceed when standalone Sonar server credentials aren't wired
+        continue-on-error: true
 
       - name: SonarQube Quality Gate Check
+        if: ${{ secrets.SONAR_TOKEN != '' }}
         uses: sonarsource/sonarqube-quality-gate-action@v1
         timeout-minutes: 5
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
         continue-on-error: true
+
+      - name: SonarQube Status Summary
+        if: ${{ secrets.SONAR_TOKEN == '' }}
+        run: |
+          echo "ℹ️ SONAR_TOKEN secret is not configured in repository secrets."
+          echo "SonarQube SAST gate skipped. To activate SonarCloud or self-hosted SonarQube analysis, configure SONAR_TOKEN and SONAR_HOST_URL in GitHub Secrets." >> $GITHUB_STEP_SUMMARY
 
   # =========================================================================
   # 3. Software Composition Analysis (SCA): Trivy Dependency Scanning
@@ -110,7 +117,7 @@ jobs:
           severity: 'CRITICAL,HIGH'
 
       - name: Upload Trivy SCA SARIF Report to GitHub Security Tab
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: 'trivy-sca-results.sarif'
@@ -127,11 +134,17 @@ jobs:
       - name: Checkout Source Code
         uses: actions/checkout@v4
 
+      - name: Normalize Repository Name (Lowercase)
+        run: |
+          LOWER_REPO=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "IMAGE_NAME=${LOWER_REPO}" >> $GITHUB_ENV
+          echo "Target Registry Image: ghcr.io/${LOWER_REPO}"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: Build Application Docker Image Locally
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
@@ -146,7 +159,7 @@ jobs:
         with:
           image-ref: 'cloud-native-devsecops-app:${{ github.sha }}'
           format: 'table'
-          exit-code: '0' # Set to '1' for hard fail if critical CVE threshold exceeded
+          exit-code: '0'
           ignore-unfixed: true
           vuln-type: 'os,library'
           severity: 'CRITICAL,HIGH'
@@ -160,7 +173,7 @@ jobs:
           severity: 'CRITICAL,HIGH'
 
       - name: Upload Trivy Container SARIF Report
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: 'trivy-image-results.sarif'
@@ -176,7 +189,7 @@ jobs:
 
       - name: Push Container Image to Registry
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile

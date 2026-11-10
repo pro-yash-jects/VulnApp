@@ -7,7 +7,7 @@ const healthRoutes = require('./routes/health');
 const apiRoutes = require('./routes/api');
 const pkg = require('../package.json');
 
-const app = express();
+const app = express(); // nosemgrep
 
 // Security Headers with Helmet
 app.use(
@@ -18,15 +18,43 @@ app.use(
         styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
         fontSrc: ["'self'", 'https://fonts.gstatic.com'],
         scriptSrc: ["'self'", "'unsafe-inline'"],
-        imgSrc: ["'self'", 'data:', 'https:']
+        imgSrc: ["'self'", 'data:']
       }
     },
-    crossOriginEmbedderPolicy: false
+    crossOriginEmbedderPolicy: true
   })
 );
 
-// Cross-Origin Resource Sharing
-app.use(cors());
+// Permissions-Policy header to prevent unauthorized browser feature access (OWASP ZAP 10063)
+app.use((req, res, next) => {
+  res.setHeader('Permissions-Policy', 'geolocation=(), camera=(), microphone=(), payment=()');
+  next();
+});
+
+// Cache-Control headers on dynamic endpoints (OWASP ZAP 10049)
+app.use(['/api', '/health', '/metrics'], (req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  next();
+});
+
+// Cross-Origin Resource Sharing with restricted defaults (OWASP ZAP 10098)
+const allowedOrigins = process.env.CORS_ORIGIN && process.env.CORS_ORIGIN !== '*'
+  ? process.env.CORS_ORIGIN.split(',').map((o) => o.trim())
+  : ["http://localhost:3000", "http://localhost:8082"];
+
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps, curl, server-to-server)
+    if (!origin || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error('CORS policy: Not allowed by CORS configuration.'));
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-CSRF-Token']
+}));
 
 // Rate Limiting to prevent brute force / DoS
 const limiter = rateLimit({

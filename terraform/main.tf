@@ -115,7 +115,7 @@ resource "aws_instance" "devsecops_server" {
   key_name                    = var.key_name != "" ? var.key_name : null
   vpc_security_group_ids      = [aws_security_group.devsecops_sg.id]
   subnet_id                   = tolist(data.aws_subnets.default.ids)[0]
-  associate_public_ip_address = true
+  associate_public_ip_address = false
   user_data                   = file("${path.module}/scripts/user-data.sh")
 
   root_block_device {
